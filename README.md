@@ -55,7 +55,6 @@ DATABASE_URL=sqlite:///./resume_analyzer.db
 
 ```bash
 cd AI-Resume-Analyzer/backend
-pip install -r requirements.txt
 python main.py
 ```
 
