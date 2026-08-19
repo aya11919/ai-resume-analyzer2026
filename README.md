@@ -74,4 +74,4 @@ Le backend et le frontend sont conçus pour être déployés séparément (par e
 ## 📝 Licence
 
 Projet développé dans le cadre d'un projet de fin d'année (PFA) 2026.
-Aya Ijenha
+### Aya Ijenha
