@@ -1,0 +1,38 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f97316"/>
+      <stop offset="100%" stop-color="#ea580c"/>
+    </linearGradient>
+    <linearGradient id="badge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#f1f5f9"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background badge -->
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- Document / CV card -->
+  <g transform="translate(122,96)">
+    <rect x="0" y="0" width="200" height="264" rx="20" fill="#ffffff" opacity="0.97"/>
+    <!-- header line (name) -->
+    <rect x="28" y="40" width="120" height="16" rx="8" fill="#ea580c"/>
+    <!-- sub line (title) -->
+    <rect x="28" y="66" width="88" height="10" rx="5" fill="#fb923c"/>
+    <!-- body lines -->
+    <rect x="28" y="108" width="144" height="10" rx="5" fill="#e2e8f0"/>
+    <rect x="28" y="130" width="144" height="10" rx="5" fill="#e2e8f0"/>
+    <rect x="28" y="152" width="104" height="10" rx="5" fill="#e2e8f0"/>
+    <rect x="28" y="188" width="144" height="10" rx="5" fill="#e2e8f0"/>
+    <rect x="28" y="210" width="120" height="10" rx="5" fill="#e2e8f0"/>
+  </g>
+
+  <!-- AI spark / verified badge, bottom-right, overlapping the card -->
+  <g transform="translate(300,290)">
+    <circle cx="56" cy="56" r="56" fill="url(#badge)"/>
+    <circle cx="56" cy="56" r="56" fill="none" stroke="#ea580c" stroke-width="6"/>
+    <!-- four-point spark -->
+    <path d="M56 22 L64 48 L90 56 L64 64 L56 90 L48 64 L22 56 L48 48 Z" fill="#ea580c"/>
+  </g>
+</svg>

@@ -1,0 +1,12 @@
+# Secrets — ne jamais pousser ce fichier sur GitHub
+**/.env
+
+# Python
+**/__pycache__/
+*.pyc
+
+# Base de données locale (les données ne doivent pas vivre dans le dépôt)
+**/*.db
+
+# OS / éditeur
+.DS_Store

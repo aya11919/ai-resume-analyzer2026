@@ -1,0 +1,2545 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Resume Analyzer — Score ATS & Assistant Recruteur</title>
+  <meta name="description"
+    content="Analyseur de CV intelligent : score ATS, correspondance de poste, compétences détectées et assistant IA interactif.">
+  <link rel="stylesheet" href="css/style.css?v=2">
+  <!-- ============================================================
+       CONFIGURATION DU BACKEND — À MODIFIER AVANT DE DÉPLOYER
+       Remplacez l'URL ci-dessous par celle de votre backend déployé
+       (ex: https://ai-resume-analyzer-backend.onrender.com)
+       ============================================================ -->
+  <script>
+    window.BACKEND_URL = 'http://127.0.0.1:8000';
+  </script>
+  <!-- EmailJS — envoi du code de vérification par email depuis le navigateur -->
+  <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+  <script>
+    const AUTH_API = (window.BACKEND_URL || 'http://127.0.0.1:8000').replace(/\/$/, '') + '/api/auth';
+    var _currentUser = null;
+    var _pendingSignupEmail = null; // email en attente de vérification par code
+
+    function openModal(isSignup) {
+      var m = document.getElementById('auth-modal');
+      if (m) m.classList.add('open');
+      var isLogin = !isSignup;
+      ['tab-login', 'form-login'].forEach(function (id) { var el = document.getElementById(id); if (el) el.classList.toggle('active', isLogin); });
+      ['tab-signup', 'form-signup'].forEach(function (id) { var el = document.getElementById(id); if (el) el.classList.toggle('active', !isLogin); });
+      var codeForm = document.getElementById('form-verify-code');
+      if (codeForm) codeForm.classList.remove('active');
+    }
+
+    function closeModal() {
+      var m = document.getElementById('auth-modal');
+      if (m) m.classList.remove('open');
+      var err = document.getElementById('auth-error');
+      if (err) err.style.display = 'none';
+    }
+
+    function switchAuthTab(isSignup) {
+      openModal(isSignup);
+    }
+
+    function showAuthError(msg) {
+      var errBox = document.getElementById('auth-error');
+      if (errBox) { errBox.textContent = msg; errBox.style.display = 'block'; }
+    }
+
+    async function handleAuthSubmit(event, isSignup) {
+      event.preventDefault();
+      var form = event.target;
+      var errBox = document.getElementById('auth-error');
+      if (errBox) errBox.style.display = 'none';
+
+      var emailInput = form.querySelector('[name="email"]');
+      var passInput = form.querySelector('[name="password"]');
+      var nameInput = form.querySelector('[name="name"]');
+
+      var email = emailInput ? emailInput.value.trim() : '';
+      var password = passInput ? passInput.value : '';
+      var name = isSignup && nameInput ? nameInput.value.trim() : '';
+
+      if (!email || !password || (isSignup && !name)) {
+        showAuthError('Veuillez remplir tous les champs.');
+        return;
+      }
+
+      if (isSignup) {
+        var confirmInput = form.querySelector('[name="password_confirm"]');
+        var confirmVal = confirmInput ? confirmInput.value : '';
+        if (!isPasswordStrong(password)) {
+          showAuthError('Le mot de passe doit contenir au moins 8 caractères, une majuscule, un chiffre et un caractère spécial.');
+          return;
+        }
+        if (password !== confirmVal) {
+          showAuthError('Les mots de passe ne correspondent pas.');
+          return;
+        }
+      }
+
+      const submitBtn = form.querySelector('button[type="submit"]');
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Chargement…'; }
+
+      try {
+        if (isSignup) {
+          const res = await fetch(`${AUTH_API}/signup`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, email, password })
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || 'Erreur lors de l\'inscription.');
+
+          _pendingSignupEmail = email;
+          showVerifyCodeScreen(email);
+        } else {
+          const res = await fetch(`${AUTH_API}/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || 'Email ou mot de passe incorrect.');
+
+          closeModal();
+          form.reset();
+          showDashboard({ name: data.name, email: data.email, token: data.token });
+        }
+      } catch (err) {
+        showAuthError(err.message || 'Une erreur est survenue.');
+      } finally {
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = isSignup ? 'Créer mon compte' : 'Se connecter'; }
+      }
+    }
+
+    // ══════════════════════════════════════════════════════
+    // Validation du mot de passe (inscription) : règles + confirmation
+    // ══════════════════════════════════════════════════════
+    function isPasswordStrong(v) {
+      return v.length >= 8 && /[A-Z]/.test(v) && /[0-9]/.test(v) && /[^A-Za-z0-9]/.test(v);
+    }
+
+    function setupSignupPasswordValidation() {
+      var pwd = document.getElementById('signup-password');
+      var confirm = document.getElementById('signup-password-confirm');
+      var rulesList = document.getElementById('signup-password-rules');
+      var confirmError = document.getElementById('signup-confirm-error');
+      if (!pwd || !confirm || !rulesList) return;
+
+      var rules = {
+        length: function (v) { return v.length >= 8; },
+        upper: function (v) { return /[A-Z]/.test(v); },
+        number: function (v) { return /[0-9]/.test(v); },
+        special: function (v) { return /[^A-Za-z0-9]/.test(v); }
+      };
+
+      function refresh() {
+        var val = pwd.value;
+        Object.keys(rules).forEach(function (key) {
+          var li = rulesList.querySelector('[data-rule="' + key + '"]');
+          if (li) li.classList.toggle('valid', rules[key](val));
+        });
+
+        var match = confirm.value.length > 0 && confirm.value === val;
+        var attempted = confirm.value.length > 0;
+        confirm.classList.toggle('valid', match);
+        confirm.classList.toggle('invalid', attempted && !match);
+        if (confirmError) confirmError.classList.toggle('show', attempted && !match);
+      }
+
+      pwd.addEventListener('input', refresh);
+      confirm.addEventListener('input', refresh);
+    }
+
+    function showVerifyCodeScreen(email) {
+      ['form-login', 'form-signup'].forEach(function (id) {
+        var el = document.getElementById(id); if (el) el.classList.remove('active');
+      });
+      ['tab-login', 'tab-signup'].forEach(function (id) {
+        var el = document.getElementById(id); if (el) el.classList.remove('active');
+      });
+      var codeForm = document.getElementById('form-verify-code');
+      if (codeForm) {
+        codeForm.classList.add('active');
+        var emailLabel = document.getElementById('verify-code-email-label');
+        if (emailLabel) emailLabel.textContent = email;
+      }
+    }
+
+    async function handleVerifyCodeSubmit(event) {
+      event.preventDefault();
+      var form = event.target;
+      var errBox = document.getElementById('auth-error');
+      if (errBox) errBox.style.display = 'none';
+
+      var codeInput = form.querySelector('[name="code"]');
+      var code = codeInput ? codeInput.value.trim() : '';
+      if (!code) { showAuthError('Veuillez saisir le code reçu par email.'); return; }
+
+      const submitBtn = form.querySelector('button[type="submit"]');
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Vérification…'; }
+
+      try {
+        const res = await fetch(`${AUTH_API}/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: _pendingSignupEmail, code })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Code incorrect.');
+
+        closeModal();
+        form.reset();
+        showDashboard({ name: data.name, email: data.email, token: data.token });
+      } catch (err) {
+        showAuthError(err.message || 'Une erreur est survenue.');
+      } finally {
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Vérifier le code'; }
+      }
+    }
+
+    async function handleResendCode() {
+      if (!_pendingSignupEmail) return;
+      try {
+        const res = await fetch(`${AUTH_API}/resend-code`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: _pendingSignupEmail })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Erreur lors du renvoi du code.');
+
+        if (typeof toast === 'function') toast('Nouveau code envoyé par email.', 's');
+      } catch (err) {
+        showAuthError(err.message || 'Erreur lors du renvoi du code.');
+      }
+    }
+
+    function showDashboard(user) {
+      if (user) _currentUser = user;
+      else if (typeof state !== 'undefined' && state.user) _currentUser = state.user;
+
+      if (typeof state !== 'undefined' && _currentUser) state.user = _currentUser;
+
+      // Le jeton de session est nécessaire pour que les appels au backend
+      // (historique, KPIs, analyse...) soient acceptés — voir require_auth()
+      // côté serveur. Sans lui, ces routes protégées répondent 401.
+      if (_currentUser && _currentUser.token) {
+        window.AUTH_TOKEN = _currentUser.token;
+      }
+      if (!window.AUTH_TOKEN) {
+        // Pas de jeton valide : on ne peut pas afficher un tableau de bord
+        // qui ne pourrait de toute façon rien charger depuis le backend.
+        hideDashboard();
+        openModal(false);
+        return;
+      }
+
+      var lv = document.getElementById('landing-view');
+      var dv = document.getElementById('dashboard-view');
+      if (lv) lv.style.display = 'none';
+      if (dv) dv.classList.remove('dash-hidden');
+
+      if (_currentUser) {
+        var un = document.getElementById('dash-user-name');
+        var ue = document.getElementById('dash-user-email');
+        var ua = document.getElementById('dash-user-avatar');
+        if (un) un.textContent = _currentUser.name;
+        if (ue) ue.textContent = _currentUser.email;
+        if (ua) ua.textContent = _currentUser.name.charAt(0).toUpperCase();
+      }
+
+      if (typeof switchPanel === 'function') switchPanel('overview');
+      if (typeof refreshStats === 'function') refreshStats();
+      if (typeof checkBackend === 'function') checkBackend();
+    }
+
+    function hideDashboard() {
+      _currentUser = null;
+      window.AUTH_TOKEN = null;
+      if (typeof state !== 'undefined') { state.user = null; state.history = []; }
+      var dv = document.getElementById('dashboard-view');
+      if (dv) dv.classList.add('dash-hidden');
+      var lv = document.getElementById('landing-view');
+      if (lv) lv.style.display = '';
+    }
+
+    document.addEventListener('DOMContentLoaded', setupSignupPasswordValidation);
+  </script>
+  <style>
+    .auth-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: rgba(10, 8, 6, 0.55);
+      backdrop-filter: blur(4px);
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+    }
+
+    .auth-modal.open {
+      display: flex;
+    }
+
+    .auth-modal-box {
+      background: #ffffff;
+      width: 100%;
+      max-width: 420px;
+      border-radius: 18px;
+      padding: 2rem;
+      position: relative;
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.25);
+      font-family: 'Inter', sans-serif;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+
+    .auth-modal-close {
+      position: absolute;
+      top: 1rem;
+      right: 1rem;
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: #78614a;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+    }
+
+    .auth-modal-close:hover {
+      background: #f3f0ec;
+    }
+
+    .auth-modal-tabs {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1.5rem;
+      background: #f3f0ec;
+      padding: 4px;
+      border-radius: 10px;
+    }
+
+    .auth-tab-btn {
+      flex: 1;
+      border: none;
+      background: transparent;
+      padding: 0.6rem;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 0.85rem;
+      color: #78614a;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .auth-tab-btn.active {
+      background: #ffffff;
+      color: #ea580c;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+    }
+
+    .auth-form {
+      display: none;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .auth-form.active {
+      display: flex;
+    }
+
+    .auth-form h2 {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      font-size: 1.3rem;
+      font-weight: 800;
+      color: #030712;
+      margin: 0 0 0.25rem;
+    }
+
+    .auth-form p.auth-sub {
+      color: #78614a;
+      font-size: 0.85rem;
+      margin: 0 0 0.5rem;
+    }
+
+    .auth-field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+
+    .auth-field label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #44372a;
+    }
+
+    .auth-field input {
+      padding: 0.7rem 0.85rem;
+      border: 1.5px solid #e7e0d8;
+      border-radius: 10px;
+      font-size: 0.9rem;
+      font-family: 'Inter', sans-serif;
+      outline: none;
+      transition: border-color 0.15s ease;
+    }
+
+    .auth-field input:focus {
+      border-color: #f97316;
+    }
+
+    .auth-submit-btn {
+      margin-top: 0.25rem;
+      background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+      color: #fff;
+      border: none;
+      padding: 0.8rem;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 0.9rem;
+      cursor: pointer;
+      box-shadow: 0 4px 14px rgba(249, 115, 22, 0.3);
+    }
+
+    .auth-submit-btn:hover {
+      filter: brightness(1.05);
+    }
+
+    .auth-error {
+      display: none;
+      background: #fef2f2;
+      color: #dc2626;
+      border: 1px solid #fecaca;
+      padding: 0.6rem 0.8rem;
+      border-radius: 8px;
+      font-size: 0.8rem;
+    }
+
+    /* ── Règles du mot de passe (inscription) ── */
+    .password-rules {
+      list-style: none;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.35rem 0.6rem;
+      margin: -0.4rem 0 0;
+      padding: 0;
+    }
+
+    .password-rules li {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.72rem;
+      color: #b8a08a;
+      transition: color 0.15s ease;
+    }
+
+    .password-rules .rule-icon {
+      width: 13px;
+      height: 13px;
+      flex-shrink: 0;
+      border-radius: 50%;
+      border: 1.5px solid #e7e0d8;
+      color: transparent;
+      transition: all 0.15s ease;
+    }
+
+    .password-rules li.valid {
+      color: #059669;
+    }
+
+    .password-rules li.valid .rule-icon {
+      border-color: #059669;
+      background: #059669;
+      color: #fff;
+    }
+
+    .field-error {
+      display: none;
+      font-size: 0.72rem;
+      color: #dc2626;
+      margin-top: -0.15rem;
+    }
+
+    .field-error.show {
+      display: block;
+    }
+
+    #signup-password-confirm.invalid {
+      border-color: #dc2626 !important;
+    }
+
+    #signup-password-confirm.valid {
+      border-color: #059669 !important;
+    }
+
+    .file-list {
+      display: none;
+      flex-direction: column;
+      gap: 0.6rem;
+      margin-top: 1rem;
+      text-align: left;
+    }
+
+    .file-list.visible {
+      display: flex;
+    }
+
+    .file-list .file-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      background: rgba(249, 115, 22, 0.06);
+      border: 1px solid rgba(249, 115, 22, 0.18);
+      border-radius: 10px;
+      padding: 0.65rem 0.85rem;
+    }
+
+    .file-list .file-card-info {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      min-width: 0;
+    }
+
+    .file-list .file-card-info svg {
+      flex-shrink: 0;
+      color: #f97316;
+    }
+
+    .file-list .file-card-name {
+      font-weight: 600;
+      font-size: 0.85rem;
+      color: #1a1007;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 320px;
+    }
+
+    .file-list .file-card-size {
+      font-size: 0.72rem;
+      color: #78614a;
+    }
+
+    .file-list .file-remove {
+      background: none;
+      border: none;
+      color: #dc2626;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      flex-shrink: 0;
+      padding: 0.3rem 0.5rem;
+      border-radius: 6px;
+    }
+
+    .file-list .file-remove:hover {
+      background: rgba(220, 38, 38, 0.08);
+    }
+
+    .file-list-count {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: #ea580c;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .results-cards {
+      display: flex;
+      flex-direction: column;
+      gap: 2rem;
+    }
+
+    .cv-result-card {
+      border: 1px solid rgba(249, 115, 22, 0.18);
+      border-radius: 16px;
+      padding: 1.5rem;
+      background: rgba(249, 115, 22, 0.015);
+    }
+
+    .cv-result-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px dashed rgba(249, 115, 22, 0.25);
+    }
+
+    .cv-result-name-wrap {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      min-width: 0;
+    }
+
+    .cv-result-index {
+      flex-shrink: 0;
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 0.8rem;
+      box-shadow: 0 4px 12px rgba(249, 115, 22, 0.25);
+    }
+
+    .cv-result-name {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      font-weight: 800;
+      font-size: 1.05rem;
+      color: #1a1007;
+      margin: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 380px;
+    }
+
+    .cv-result-badges {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-shrink: 0;
+    }
+
+    .cv-result-badge {
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 0.3rem 0.65rem;
+      border-radius: 99px;
+      white-space: nowrap;
+    }
+
+    .cv-result-badge.ats {
+      background: rgba(249, 115, 22, 0.12);
+      color: #ea580c;
+    }
+
+    .cv-result-badge.match {
+      background: rgba(16, 185, 129, 0.12);
+      color: #059669;
+    }
+
+    .saas-top-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .saas-top-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+    }
+
+    .search-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .search-wrapper svg {
+      position: absolute;
+      left: 0.85rem;
+      width: 16px;
+      height: 16px;
+      color: #b8a08a;
+      pointer-events: none;
+    }
+
+    .search-wrapper input {
+      padding: 0.6rem 0.9rem 0.6rem 2.5rem;
+      border: 1.5px solid #e7e0d8;
+      border-radius: 10px;
+      font-size: 0.85rem;
+      font-family: 'Inter', sans-serif;
+      background: #ffffff;
+      min-width: 240px;
+      outline: none;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .search-wrapper input::placeholder {
+      color: #b8a08a;
+    }
+
+    .search-wrapper input:focus {
+      border-color: #f97316;
+      box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.12);
+    }
+
+    .secondary-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.6rem 0.95rem;
+      background: #ffffff;
+      border: 1.5px solid #e7e0d8;
+      border-radius: 10px;
+      font-family: 'Inter', sans-serif;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: #44372a;
+      cursor: pointer;
+      transition: border-color 0.15s ease, background 0.15s ease, transform 0.1s ease;
+    }
+
+    .secondary-btn svg {
+      color: #78614a;
+      flex-shrink: 0;
+    }
+
+    .secondary-btn:hover {
+      border-color: #f97316;
+      background: rgba(249, 115, 22, 0.04);
+      color: #ea580c;
+    }
+
+    .secondary-btn:hover svg {
+      color: #ea580c;
+    }
+
+    .secondary-btn:active {
+      transform: scale(0.97);
+    }
+
+    .primary-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.65rem 1.1rem;
+      background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+      border: none;
+      border-radius: 10px;
+      font-family: 'Inter', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: #ffffff;
+      cursor: pointer;
+      box-shadow: 0 4px 14px rgba(249, 115, 22, 0.28);
+      transition: filter 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
+    }
+
+    .primary-btn:hover {
+      filter: brightness(1.06);
+      box-shadow: 0 6px 18px rgba(249, 115, 22, 0.35);
+    }
+
+    .primary-btn:active {
+      transform: scale(0.97);
+    }
+
+    @media (max-width: 720px) {
+      .saas-top-actions {
+        width: 100%;
+      }
+
+      .search-wrapper input {
+        width: 100%;
+        min-width: 0;
+      }
+
+      .saas-top-actions>* {
+        flex: 1 1 auto;
+      }
+    }
+
+    /* ══════════════════════════════════════════════════
+       PAGE D'ACCUEIL SANS SCROLL
+    ══════════════════════════════════════════════════ */
+    html,
+    body {
+      height: 100%;
+      overflow: hidden;
+    }
+
+    #landing-view {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    .brand-bar {
+      flex-shrink: 0;
+      position: static;
+    }
+
+    #landing-view .page {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      padding: 0 1.5rem;
+    }
+
+    .landing-section {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: clamp(1rem, 3vh, 2.5rem) 0;
+      gap: clamp(0.9rem, 2vh, 1.5rem);
+      width: 100%;
+    }
+
+    .landing-badge {
+      margin-bottom: 0;
+      font-size: clamp(0.85rem, 1.1vw, 0.95rem);
+      padding: 10px 20px;
+    }
+
+    .landing-title {
+      font-size: clamp(2.2rem, 5vw, 3.4rem);
+      margin-bottom: 0;
+      line-height: 1.1;
+    }
+
+    .landing-sub {
+      font-size: clamp(1rem, 1.6vw, 1.15rem);
+      margin-bottom: 0;
+      max-width: 680px;
+    }
+
+    .landing-cta {
+      margin-bottom: 0;
+    }
+
+    .btn-scroll {
+      padding: clamp(13px, 1.8vh, 16px) 30px;
+      font-size: clamp(1rem, 1.3vw, 1.1rem);
+    }
+
+    /* Écart volontairement plus grand entre le bouton et les cartes */
+    .landing-cards {
+      margin-top: clamp(2.5rem, 7vh, 4.5rem);
+      gap: clamp(1rem, 1.8vw, 1.5rem);
+      width: 100%;
+    }
+
+    .landing-card {
+      padding: clamp(1.5rem, 3.5vh, 2.2rem) clamp(1.25rem, 1.8vw, 1.75rem);
+      justify-content: center;
+    }
+
+    /* La carte "Matching IA" (.active) ressort légèrement des autres */
+    .landing-card.active {
+      border: 1.5px solid rgba(249, 115, 22, 0.35);
+      box-shadow: 0 8px 28px rgba(249, 115, 22, 0.14);
+      position: relative;
+    }
+
+    .landing-card.active::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #f97316, #ea580c);
+    }
+
+    .card-icon-wrap {
+      width: clamp(42px, 3.6vw, 48px);
+      height: clamp(42px, 3.6vw, 48px);
+      margin-bottom: clamp(1rem, 2vh, 1.5rem);
+    }
+
+    .card-icon-wrap svg {
+      width: clamp(20px, 1.8vw, 23px);
+      height: clamp(20px, 1.8vw, 23px);
+    }
+
+    .card-card-title {
+      font-size: clamp(1.05rem, 1.3vw, 1.2rem);
+      margin-bottom: clamp(0.5rem, 1vh, 0.75rem);
+    }
+
+    .card-card-desc {
+      font-size: clamp(0.85rem, 1vw, 0.92rem);
+      line-height: 1.5;
+      display: -webkit-box;
+      -webkit-line-clamp: 4;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    @media (max-height: 680px),
+    (max-width: 700px) {
+
+      html,
+      body {
+        overflow-y: auto;
+      }
+
+      #landing-view {
+        height: auto;
+        min-height: 100vh;
+      }
+
+      .landing-section {
+        min-height: auto;
+        justify-content: flex-start;
+      }
+
+      .landing-cards {
+        margin-top: 1.5rem;
+      }
+
+      /* Sur petit écran, aucune limite de lignes : le texte s'affiche toujours en entier */
+      .card-card-desc {
+        -webkit-line-clamp: unset;
+        display: block;
+        overflow: visible;
+      }
+    }
+
+    /* ══════════════════════════════════════════════════
+       RESPONSIVE MOBILE — barre de marque, modal, dashboard
+    ══════════════════════════════════════════════════ */
+
+    /* Barre du haut : passe sur 2 lignes si besoin, réduit les libellés */
+    @media (max-width: 640px) {
+      .brand-bar {
+        padding: 0.6rem 1rem;
+      }
+
+      .brand-bar-inner {
+        flex-wrap: wrap;
+        row-gap: 0.6rem;
+        justify-content: center;
+      }
+
+      .brand-bar-right {
+        gap: 0.6rem;
+      }
+    }
+
+    @media (max-width: 480px) {
+
+      /* n'affiche que le point de statut, pas le texte, pour gagner de la place */
+      #status-text {
+        display: none;
+      }
+
+      .status-pill {
+        padding: 0.45rem;
+      }
+
+      .btn-profile {
+        font-size: 0.72rem;
+        padding: 8px 12px;
+      }
+    }
+
+    /* Modale de connexion / inscription */
+    @media (max-width: 480px) {
+      .auth-modal {
+        padding: 0.75rem;
+      }
+
+      .auth-modal-box {
+        padding: 1.5rem 1.25rem;
+        border-radius: 14px;
+      }
+
+      .password-rules {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Barre d'actions du panneau "Mes CV" : empile sur mobile */
+    @media (max-width: 560px) {
+      .saas-top-bar {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .saas-top-actions {
+        width: 100%;
+      }
+
+      .saas-top-actions>* {
+        width: 100%;
+      }
+
+      .search-wrapper input {
+        width: 100%;
+        min-width: 0;
+      }
+    }
+
+    /* Tableau des candidats : scroll horizontal plutôt que compression illisible */
+    .saas-table-container {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .saas-table {
+      min-width: 640px;
+    }
+
+    /* Tiroir de détail CV : pleine largeur sur mobile */
+    @media (max-width: 560px) {
+      .saas-drawer {
+        width: 100%;
+      }
+
+      .saas-drawer-scores {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Padding des panneaux du dashboard réduit sur très petit écran */
+    @media (max-width: 480px) {
+      .dash-panel {
+        padding: 1rem;
+      }
+
+      .dash-panel-title {
+        font-size: 1.3rem;
+      }
+
+      .dash-stat-card {
+        padding: 1rem;
+      }
+    }
+
+    /* Formulaire d'analyse : la dropzone et les champs restent lisibles */
+    @media (max-width: 480px) {
+      .dash-analyze-grid {
+        gap: 1rem;
+      }
+
+      .dash-dropzone {
+        padding: 1.5rem 1rem;
+      }
+    }
+
+    /* Chat IA : occupe la hauteur disponible sans déborder sur mobile */
+    @media (max-width: 560px) {
+      .chat-container {
+        height: calc(100vh - 180px);
+      }
+
+      .chat-bubble {
+        max-width: 88%;
+      }
+    }
+
+    /* ── Cartes de profil CV (Vue d'ensemble) ── */
+    .cv-profile-cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 1rem;
+    }
+
+    .cv-profile-card {
+      background: #ffffff;
+      border-radius: 14px;
+      border-left: 4px solid #f97316;
+      box-shadow: 0 2px 10px rgba(26, 16, 7, 0.06);
+      padding: 1.1rem 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+      cursor: pointer;
+      transition: box-shadow 0.15s ease, transform 0.1s ease;
+    }
+
+    .cv-profile-card:hover {
+      box-shadow: 0 6px 18px rgba(26, 16, 7, 0.1);
+      transform: translateY(-1px);
+    }
+
+    .cv-profile-card-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .cv-profile-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.68rem;
+      font-weight: 700;
+      color: #78614a;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .cv-profile-status .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #f97316;
+      display: inline-block;
+    }
+
+    .cv-profile-delete {
+      background: none;
+      border: none;
+      color: #b8a08a;
+      cursor: pointer;
+      padding: 2px;
+      display: flex;
+    }
+
+    .cv-profile-delete:hover {
+      color: #dc2626;
+    }
+
+    .cv-profile-title {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      font-weight: 800;
+      font-size: 1.05rem;
+      color: #1a1007;
+      margin: 0;
+    }
+
+    .cv-profile-desc {
+      font-size: 0.82rem;
+      color: #78614a;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      line-height: 1.4;
+    }
+
+    .cv-profile-meta {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      font-size: 0.78rem;
+      color: #44372a;
+      font-weight: 600;
+    }
+
+    .cv-profile-meta span {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .cv-profile-meta svg {
+      flex-shrink: 0;
+      color: #78614a;
+    }
+
+    .cv-profile-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+    }
+
+    .cv-profile-tag {
+      background: #f3f0ec;
+      color: #44372a;
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 0.25rem 0.6rem;
+      border-radius: 6px;
+    }
+
+    .cv-profile-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 0.3rem;
+      padding-top: 0.6rem;
+      border-top: 1px solid #f3f0ec;
+      font-size: 0.8rem;
+    }
+
+    .cv-profile-score {
+      color: #78614a;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .cv-profile-link {
+      color: #ea580c;
+      font-weight: 700;
+    }
+
+    .status-pill {
+      display: none !important;
+    }
+
+    /* ── Cadre visible pour le bouton "Connexion / Profil" uniquement ── */
+    .btn-profile {
+      border: 2px solid #d1c7ba !important;
+      border-radius: 10px !important;
+      padding: 9px 18px !important;
+      background: #ffffff !important;
+      transition: border-color 0.15s ease, color 0.15s ease !important;
+    }
+
+    .btn-profile:hover {
+      border-color: #f97316 !important;
+      color: #ea580c !important;
+    }
+
+    .card-card-desc {
+      -webkit-line-clamp: unset !important;
+      display: block !important;
+      overflow: visible !important;
+    }
+
+    /* ── Cartes de statistiques : répartition uniforme, peu importe le nombre de cartes ── */
+    .dash-stats-grid {
+      display: grid !important;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)) !important;
+      gap: 1.25rem !important;
+      align-items: stretch !important;
+    }
+
+    .dash-stat-card,
+    .saas-stat-card {
+      height: 100% !important;
+      box-sizing: border-box !important;
+    }
+  </style>
+</head>
+
+<body>
+
+  <canvas id="network-canvas"></canvas>
+
+  <div id="landing-view">
+
+    <div class="brand-bar">
+      <div class="brand-bar-inner">
+        <div class="brand-logo" style="text-decoration: none; display: flex; align-items: center;">
+          <img src="assets/logo-horizontal-light.png" alt="AI Resume Analyzer" style="height: 40px; width: auto; display: block;">
+        </div>
+        <div class="brand-bar-right">
+          <div class="status-pill">
+            <span class="dot" id="status-dot"></span>
+            <span id="status-text">Connexion…</span>
+          </div>
+          <button class="btn-profile" id="btn-profile" onclick="openModal()">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+              <circle cx="12" cy="7" r="4" />
+            </svg>
+            Connexion / Profil
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <main class="page">
+      <section class="landing-section" id="landing-section">
+        <div class="landing-badge">
+          <span class="glow-dot"></span>
+          Conçu pour les équipes RH
+        </div>
+        <h1 class="landing-title"><span>AI Resume Analyzer</span></h1>
+        <p class="landing-sub">Analysez vos CV grâce à l'Intelligence Artificielle.</p>
+        <div class="landing-cta">
+          <button class="btn-scroll" id="btn-scroll-to-workspace"
+            onclick="typeof state !== 'undefined' && state.user ? showDashboard() : openModal()">
+            Commencer l'analyse
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="5" y1="12" x2="19" y2="12" />
+              <polyline points="12 5 19 12 12 19" />
+            </svg>
+          </button>
+        </div>
+
+        <div class="landing-cards">
+          <div class="landing-card">
+            <div class="card-icon-wrap purple">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+              </svg>
+            </div>
+            <h3 class="card-card-title">Analyse ATS</h3>
+            <p class="card-card-desc">Calculez instantanément la lisibilité de votre CV et le score de compatibilité
+              avec les ATS.</p>
+          </div>
+          <div class="landing-card active">
+            <div class="card-icon-wrap orange">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <circle cx="12" cy="12" r="6" />
+                <circle cx="12" cy="12" r="2" />
+              </svg>
+            </div>
+            <h3 class="card-card-title">Matching IA</h3>
+            <p class="card-card-desc">Comparez sémantiquement les compétences du CV avec les exigences d'une offre
+              d'emploi ciblée.</p>
+          </div>
+          <div class="landing-card">
+            <div class="card-icon-wrap emerald">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round">
+                <line x1="18" y1="20" x2="18" y2="10" />
+                <line x1="12" y1="20" x2="12" y2="4" />
+                <line x1="6" y1="20" x2="6" y2="14" />
+              </svg>
+            </div>
+            <h3 class="card-card-title">Tableau de bord</h3>
+            <p class="card-card-desc">Suivez l'historique complet de vos analyses et visualisez vos progrès au fil du
+              temps.</p>
+          </div>
+          <div class="landing-card">
+            <div class="card-icon-wrap blue">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              </svg>
+            </div>
+            <h3 class="card-card-title">Assistant IA</h3>
+            <p class="card-card-desc">Posez des questions sur le CV et recevez des conseils de réécriture personnalisés.
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="auth-modal" id="auth-modal">
+    <div class="auth-modal-box">
+      <button class="auth-modal-close" onclick="closeModal()" type="button" aria-label="Fermer">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5">
+          <line x1="18" y1="6" x2="6" y2="18" />
+          <line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </button>
+
+      <div class="auth-modal-tabs">
+        <button type="button" class="auth-tab-btn active" id="tab-login"
+          onclick="switchAuthTab(false)">Connexion</button>
+        <button type="button" class="auth-tab-btn" id="tab-signup" onclick="switchAuthTab(true)">Inscription</button>
+      </div>
+
+      <div class="auth-error" id="auth-error"></div>
+
+      <form class="auth-form active" id="form-login" onsubmit="handleAuthSubmit(event, false)">
+        <h2>Se connecter</h2>
+        <p class="auth-sub">Connectez-vous pour accéder à votre tableau de bord.</p>
+        <div class="auth-field">
+          <label for="login-email">Adresse e-mail</label>
+          <input type="email" id="login-email" name="email" placeholder="vous@exemple.com" required>
+        </div>
+        <div class="auth-field">
+          <label for="login-password">Mot de passe</label>
+          <input type="password" id="login-password" name="password" placeholder="••••••••" required>
+        </div>
+        <button type="submit" class="auth-submit-btn">Se connecter</button>
+      </form>
+
+      <form class="auth-form" id="form-signup" onsubmit="handleAuthSubmit(event, true)">
+        <h2>Créer un compte</h2>
+        <p class="auth-sub">Rejoignez la plateforme en quelques secondes.</p>
+        <div class="auth-field">
+          <label for="signup-name">Nom complet</label>
+          <input type="text" id="signup-name" name="name" placeholder="Jean Dupont" required>
+        </div>
+        <div class="auth-field">
+          <label for="signup-email">Adresse e-mail</label>
+          <input type="email" id="signup-email" name="email" placeholder="vous@exemple.com" required>
+        </div>
+        <div class="auth-field">
+          <label for="signup-password">Mot de passe</label>
+          <input type="password" id="signup-password" name="password" placeholder="••••••••" required>
+          <ul class="password-rules" id="signup-password-rules">
+            <li data-rule="length"><span class="rule-icon">✓</span>8 caractères minimum</li>
+            <li data-rule="upper"><span class="rule-icon">✓</span>Une majuscule</li>
+            <li data-rule="number"><span class="rule-icon">✓</span>Un chiffre</li>
+            <li data-rule="special"><span class="rule-icon">✓</span>Un caractère spécial (@ # $ !)</li>
+          </ul>
+        </div>
+        <div class="auth-field">
+          <label for="signup-password-confirm">Confirmer le mot de passe</label>
+          <input type="password" id="signup-password-confirm" name="password_confirm" placeholder="••••••••" required>
+          <span class="field-error" id="signup-confirm-error">Les mots de passe ne correspondent pas</span>
+        </div>
+        <button type="submit" class="auth-submit-btn">Créer mon compte</button>
+      </form>
+
+      <!-- Formulaire de saisie du code de vérification (après inscription) -->
+      <form class="auth-form" id="form-verify-code" onsubmit="handleVerifyCodeSubmit(event)">
+        <h2>Vérifiez votre email</h2>
+        <p class="auth-sub">
+          Un code à 6 chiffres a été envoyé à <strong id="verify-code-email-label">—</strong>.
+          Saisissez-le ci-dessous pour activer votre compte.
+        </p>
+        <div class="auth-field">
+          <label for="verify-code-input">Code de vérification</label>
+          <input type="text" id="verify-code-input" name="code" placeholder="123456" maxlength="6" inputmode="numeric"
+            pattern="[0-9]*" required
+            style="letter-spacing: 0.4em; text-align: center; font-size: 1.1rem; font-weight: 700;">
+        </div>
+        <button type="submit" class="auth-submit-btn">Vérifier le code</button>
+        <button type="button" class="link-btn" onclick="handleResendCode()"
+          style="background:none;border:none;color:#78614a;font-size:0.8rem;cursor:pointer;margin-top:0.25rem;">
+          Vous n'avez rien reçu ? Renvoyer le code
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <div id="dashboard-view" class="dash-hidden">
+    <div class="dash-layout">
+
+      <style>
+        .dash-sidebar {
+          background-color: #0a0a0a !important;
+          border-right: 1px solid #262626 !important;
+          color: #ffffff !important;
+        }
+
+        .dash-sidebar-tagline {
+          color: #a3a3a3 !important;
+        }
+
+        .dash-nav-item {
+          color: #d4d4d8 !important;
+        }
+
+        .dash-nav-item:hover {
+          background-color: #262626 !important;
+          color: #ffffff !important;
+        }
+
+        .dash-nav-item.active {
+          background-color: rgba(249, 115, 22, 0.15) !important;
+          color: #f97316 !important;
+        }
+
+        .dash-user-card {
+          background-color: #171717 !important;
+          border: 1px solid #262626 !important;
+          box-shadow: none !important;
+        }
+
+        .dash-user-name {
+          color: #ffffff !important;
+        }
+
+        .dash-user-email {
+          color: #a3a3a3 !important;
+        }
+
+        .dash-logout {
+          color: #a3a3a3 !important;
+        }
+
+        .dash-logout:hover {
+          color: #ef4444 !important;
+          background-color: rgba(239, 68, 68, 0.1) !important;
+        }
+
+        /* Styles Calendrier */
+        .dash-panel-eyebrow {
+          font-family: 'Inter', sans-serif;
+          font-size: 0.72rem;
+          font-weight: 700;
+          color: var(--orange-dark);
+          text-transform: uppercase;
+          letter-spacing: 0.12em;
+          margin-bottom: 0.85rem;
+          background: rgba(249, 115, 22, 0.08);
+          border: 1px solid rgba(249, 115, 22, 0.15);
+          padding: 5px 14px;
+          border-radius: 99px;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .calendar-section-title {
+          font-family: 'Plus Jakarta Sans', sans-serif;
+          font-size: 0.95rem;
+          color: var(--text-1);
+          text-transform: uppercase;
+          letter-spacing: 0.12em;
+          margin: 40px 0 20px 0;
+          font-weight: 800;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+
+        .calendar-section-title::after {
+          content: '';
+          flex: 1;
+          height: 1.5px;
+          background: linear-gradient(90deg, rgba(234, 170, 100, 0.25) 0%, transparent 100%);
+        }
+
+        .calendar-empty-state {
+          grid-column: 1 / -1;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          text-align: center;
+          padding: 4.5rem 2rem;
+          background: var(--bg-alt);
+          border: 2px dashed var(--border);
+          border-radius: var(--radius);
+          box-shadow: var(--shadow-sm);
+          margin-top: 10px;
+        }
+
+        .calendar-empty-icon {
+          width: 58px;
+          height: 58px;
+          border-radius: 50%;
+          background: rgba(249, 115, 22, 0.06);
+          color: var(--orange);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin-bottom: 1.25rem;
+          border: 1px solid rgba(249, 115, 22, 0.12);
+        }
+
+        .calendar-empty-icon svg {
+          width: 28px;
+          height: 28px;
+        }
+
+        .calendar-empty-state h4 {
+          font-family: 'Plus Jakarta Sans', sans-serif;
+          font-size: 1.15rem;
+          font-weight: 800;
+          color: var(--text-1);
+          margin: 0 0 0.5rem 0;
+        }
+
+        .calendar-empty-state p {
+          font-size: 0.85rem;
+          color: var(--text-2);
+          max-width: 380px;
+          margin: 0;
+          line-height: 1.5;
+        }
+
+        .calendar-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+          gap: 20px;
+        }
+
+        .calendar-card {
+          background: var(--bg-1);
+          border: 1px solid var(--border-color);
+          border-radius: 8px;
+          padding: 20px;
+          display: flex;
+          flex-direction: column;
+          gap: 15px;
+        }
+
+        .calendar-card-header {
+          display: flex;
+          gap: 15px;
+          align-items: flex-start;
+          justify-content: space-between;
+        }
+
+        .calendar-date-box {
+          background: var(--primary);
+          color: white;
+          border-radius: 6px;
+          padding: 8px 12px;
+          text-align: center;
+          min-width: 60px;
+        }
+
+        .calendar-date-day {
+          font-size: 1.4rem;
+          font-weight: 800;
+          line-height: 1;
+        }
+
+        .calendar-date-month {
+          font-size: 0.75rem;
+          text-transform: uppercase;
+          font-weight: 600;
+          margin-top: 4px;
+        }
+
+        .calendar-candidate-info {
+          flex: 1;
+        }
+
+        .calendar-candidate-name {
+          font-weight: 700;
+          font-size: 1.1rem;
+          color: var(--text-1);
+          text-transform: uppercase;
+          margin: 0 0 5px 0;
+          line-height: 1.2;
+        }
+
+        .calendar-job-title {
+          font-size: 0.85rem;
+          color: var(--text-3);
+        }
+
+        .calendar-card-meta {
+          display: flex;
+          gap: 15px;
+          font-size: 0.9rem;
+          color: var(--text-1);
+          font-weight: 600;
+          align-items: center;
+        }
+
+        .calendar-meta-item {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .calendar-meta-format {
+          background: var(--bg-2);
+          padding: 3px 8px;
+          border-radius: 4px;
+          font-size: 0.8rem;
+          color: var(--text-2);
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
+
+        .calendar-link {
+          background: var(--bg-2);
+          padding: 10px;
+          border-radius: 6px;
+          font-size: 0.85rem;
+          color: var(--text-2);
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .calendar-notes {
+          background: rgba(249, 115, 22, 0.05);
+          border-left: 3px solid var(--primary);
+          padding: 10px;
+          font-size: 0.85rem;
+          color: var(--text-2);
+          font-style: italic;
+        }
+
+        .calendar-date-box {
+          background: linear-gradient(135deg, #f97316 0%, #ea580c 100%) !important;
+          color: #ffffff !important;
+        }
+      </style>
+      <aside class="dash-sidebar">
+        <div class="dash-sidebar-logo" style="padding-bottom: 1.5rem;">
+          <div style="margin-bottom: 6px;">
+            <img src="assets/logo-horizontal-dark.png" alt="AI Resume Analyzer" style="height: 30px; width: auto; display: block;">
+          </div>
+          <span
+            style="font-family: 'Inter', sans-serif; font-size: 0.65rem; font-weight: 700; color: #a3a3a3; letter-spacing: 0.14em; text-transform: uppercase; display: block;">RH
+            Analytics</span>
+        </div>
+
+        <nav class="dash-nav">
+          <a class="dash-nav-item active" id="menu-overview" href="#">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              stroke-linejoin="round">
+              <rect x="3" y="3" width="7" height="7" />
+              <rect x="14" y="3" width="7" height="7" />
+              <rect x="3" y="14" width="7" height="7" />
+              <rect x="14" y="14" width="7" height="7" />
+            </svg>
+            <span>Vue d'ensemble</span>
+          </a>
+          <a class="dash-nav-item" id="menu-analyze" href="#">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+            </svg>
+            <span>Nouvelle analyse</span>
+          </a>
+          <a class="dash-nav-item" id="menu-resumes" href="#">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              stroke-linejoin="round">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+            </svg>
+            <span>Mes CV</span>
+          </a>
+          <a class="dash-nav-item" id="menu-calendar" href="#">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              stroke-linejoin="round">
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+              <line x1="16" y1="2" x2="16" y2="6" />
+              <line x1="8" y1="2" x2="8" y2="6" />
+              <line x1="3" y1="10" x2="21" y2="10" />
+            </svg>
+            <span>Calendrier</span>
+          </a>
+          <a class="dash-nav-item" id="menu-chat" href="#">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              stroke-linejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+            <span>Assistant IA</span>
+          </a>
+        </nav>
+
+        <div class="dash-sidebar-footer">
+          <div class="dash-user-card">
+            <div class="dash-user-avatar" id="dash-user-avatar">J</div>
+            <div class="dash-user-info">
+              <span class="dash-user-name" id="dash-user-name">Utilisateur</span>
+              <span class="dash-user-email" id="dash-user-email">—</span>
+            </div>
+          </div>
+          <button class="dash-logout" id="btn-logout" title="Déconnexion" aria-label="Déconnexion"
+            style="justify-content:center;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              stroke-linejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+          </button>
+        </div>
+      </aside>
+
+      <main class="dash-main">
+
+        <div class="dash-panel active" id="panel-overview">
+          <div class="dash-panel-header">
+            <div>
+              <h2 class="dash-panel-title" style="margin:0;">Tableau de bord</h2>
+              <p class="dash-panel-sub">Vue d'ensemble de vos analyses RH</p>
+            </div>
+          </div>
+
+          <div class="dash-stats-grid saas-stats">
+            <div class="dash-stat-card saas-stat-card">
+              <div class="saas-stat-header">
+                <span class="dash-stat-label">Total des CV</span>
+                <div class="dash-stat-icon purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" width="20" height="20">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                  </svg></div>
+              </div>
+              <div class="saas-stat-body">
+                <span class="dash-stat-value" id="stat-total">0</span>
+              </div>
+            </div>
+            <div class="dash-stat-card saas-stat-card">
+              <div class="saas-stat-header">
+                <span class="dash-stat-label">CV Analysés</span>
+                <div class="dash-stat-icon blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" width="20" height="20">
+                    <circle cx="12" cy="12" r="10" />
+                    <path d="M12 6v6l4 2" />
+                  </svg></div>
+              </div>
+              <div class="saas-stat-body">
+                <span class="dash-stat-value" id="stat-analyzed">0</span>
+              </div>
+            </div>
+            <div class="dash-stat-card saas-stat-card">
+              <div class="saas-stat-header">
+                <span class="dash-stat-label">Score ATS moyen</span>
+                <div class="dash-stat-icon orange"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" width="20" height="20">
+                    <circle cx="12" cy="12" r="10" />
+                    <circle cx="12" cy="12" r="6" />
+                    <circle cx="12" cy="12" r="2" />
+                  </svg></div>
+              </div>
+              <div class="saas-stat-body">
+                <span class="dash-stat-value" id="stat-avg-ats">—</span>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- ═══ Cartes de profil des CV analysés ═══ -->
+          <div class="cv-profile-section" id="cv-profile-section" style="margin-top: 1.5rem; display:none;">
+            <h3 class="dash-section-title" style="margin-bottom: 1rem;">Profils analysés</h3>
+            <div class="cv-profile-cards-grid" id="cv-profile-cards-grid"></div>
+          </div>
+
+
+
+          <div class="stats-charts-grid" id="dash-overview-charts-grid" style="display:none; margin-top: 1.5rem;">
+
+            <div class="card stats-chart-card stats-chart-full">
+              <h3 class="dash-section-title" style="margin-bottom: 0.5rem;">Évolution du score ATS</h3>
+              <div class="chart-wrap" style="height: 220px;">
+                <canvas id="chart-overview-trend" role="img"
+                  aria-label="Courbe d'évolution du score ATS sur l'historique des analyses">
+                </canvas>
+              </div>
+            </div>
+
+            <div class="card stats-chart-card">
+              <h3 class="dash-section-title" style="margin-bottom: 0.5rem;">Répartition des scores ATS</h3>
+              <div class="chart-wrap" style="height: 200px;">
+                <canvas id="chart-overview-distribution" role="img"
+                  aria-label="Histogramme de répartition des CV par tranche de score ATS">
+                </canvas>
+              </div>
+            </div>
+
+            <div class="card stats-chart-card">
+              <h3 class="dash-section-title" style="margin-bottom: 0.5rem;">Qualité de match</h3>
+              <div class="chart-wrap" style="height: 200px;">
+                <canvas id="chart-overview-match" role="img"
+                  aria-label="Diagramme en anneau de la qualité de match : élevé, moyen, faible">
+                </canvas>
+              </div>
+              <div id="overview-match-legend" class="chart-legend"></div>
+            </div>
+
+          </div>
+
+          <div id="overview-charts-empty" class="dash-empty-state" style="margin-top: 1.5rem;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <line x1="18" y1="20" x2="18" y2="10" />
+              <line x1="12" y1="20" x2="12" y2="4" />
+              <line x1="6" y1="20" x2="6" y2="14" />
+            </svg>
+            <p>Pas encore assez de données pour afficher des statistiques. Analysez au moins un CV pour voir apparaître
+              les graphiques ici.</p>
+          </div>
+
+        </div>
+
+        <div class="dash-panel" id="panel-resumes" style="position: relative; overflow: hidden;">
+          <div class="saas-top-bar">
+            <div class="saas-top-titles">
+              <h2 class="dash-panel-title" style="margin:0;">Mes CV</h2>
+              <p class="dash-panel-sub">Gestion et suivi des candidatures</p>
+            </div>
+            <div class="saas-top-actions">
+              <div class="search-wrapper">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="11" cy="11" r="8" />
+                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+                <input type="text" id="saas-search" placeholder="Rechercher un candidat, un poste...">
+              </div>
+              <button class="secondary-btn saas-filter-btn" id="saas-filter-btn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+                </svg>
+                <span class="filter-label">Filtres</span>
+              </button>
+              <button class="secondary-btn saas-sort-btn" id="saas-sort-btn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <polyline points="19 12 12 19 5 12" />
+                </svg>
+                <span class="sort-label">Trier</span>
+              </button>
+              <button class="primary-btn" id="btn-new-analysis-dash" style="gap:8px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="16" height="16">
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+                Nouvelle analyse
+              </button>
+            </div>
+          </div>
+
+          <div class="saas-table-container">
+            <table class="saas-table" id="overview-table" style="display:none">
+              <thead>
+                <tr>
+                  <th>Rang</th>
+                  <th>Candidat</th>
+                  <th>Diplôme</th>
+                  <th>Signal</th>
+                  <th>Recommandation</th>
+                  <th>Skills</th>
+                  <th>Statut</th>
+                  <th style="text-align:right">Action</th>
+                </tr>
+              </thead>
+              <tbody id="overview-table-body">
+              </tbody>
+            </table>
+
+            <div id="overview-history-empty" class="dash-empty-state">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+              </svg>
+              <p>Aucune candidature pour l'instant. <button class="link-btn" id="btn-start-first">Commencez ici
+                  →</button></p>
+            </div>
+          </div>
+
+          <div class="saas-drawer" id="saas-cv-drawer">
+            <div class="saas-drawer-header">
+              <div class="saas-drawer-title">
+                <h3 id="drawer-candidate-name">Détails de l'analyse</h3>
+                <span class="saas-badge" id="drawer-status-badge">Complété</span>
+              </div>
+              <button class="icon-btn" id="btn-close-drawer">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+            <div class="saas-drawer-content">
+              <div class="saas-drawer-scores">
+                <div class="saas-drawer-score-box">
+                  <span>Score ATS</span>
+                  <strong id="drawer-score-ats" class="text-orange">--</strong>
+                </div>
+                <div class="saas-drawer-score-box">
+                  <span>Matching</span>
+                  <strong id="drawer-score-match" class="text-emerald">--</strong>
+                </div>
+              </div>
+
+              <div class="saas-drawer-section">
+                <h4>Résumé IA</h4>
+                <p id="drawer-summary" class="text-sm">Aucun résumé disponible.</p>
+              </div>
+
+              <div class="saas-drawer-section">
+                <h4>Compétences détectées</h4>
+                <div id="drawer-skills" class="skills-tags-container"></div>
+              </div>
+
+              <div class="saas-drawer-section" id="drawer-section-projects">
+                <h4>Projets Académiques & Réalisations</h4>
+                <div id="drawer-projects" class="text-sm"></div>
+              </div>
+
+              <div class="saas-drawer-section" id="drawer-section-experience">
+                <h4>Expérience Professionnelle</h4>
+                <div id="drawer-experience" class="text-sm"></div>
+              </div>
+
+              <div class="saas-drawer-section" id="drawer-section-education">
+                <h4>Formation & Diplômes</h4>
+                <div id="drawer-education" class="text-sm"></div>
+              </div>
+
+              <div class="saas-drawer-section" id="drawer-section-certifications">
+                <h4>Certifications & Ateliers</h4>
+                <div id="drawer-certifications" class="text-sm"></div>
+              </div>
+
+              <div class="saas-drawer-section" id="drawer-section-languages">
+                <h4>Langues</h4>
+                <div id="drawer-languages" class="skills-tags-container"></div>
+              </div>
+
+              <div class="saas-drawer-section">
+                <h4>Recommandations & Points Forts</h4>
+                <ul id="drawer-recommendations" class="text-sm" style="padding-left:1rem;"></ul>
+              </div>
+            </div>
+            <div class="saas-drawer-footer">
+              <button class="secondary-btn" id="drawer-btn-download">Télécharger PDF</button>
+              <button class="primary-btn" id="drawer-btn-full">Voir l'analyse complète</button>
+            </div>
+          </div>
+          <div class="saas-drawer-overlay" id="saas-drawer-overlay"></div>
+        </div>
+
+        <div class="dash-panel" id="panel-analyze">
+          <div class="dash-panel-header">
+            <div>
+              <h2 class="dash-panel-title">Nouvelle analyse</h2>
+              <p class="dash-panel-sub">Importez un CV et lancez une analyse IA complète.</p>
+            </div>
+          </div>
+          <div class="dash-analyze-grid">
+            <div class="dash-section-card">
+              <h3 class="dash-section-title" style="margin-bottom:1.25rem">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--orange)" stroke-width="2.5"
+                  style="vertical-align:-3px;margin-right:8px">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" y1="3" x2="12" y2="15" />
+                </svg>
+                CV
+              </h3>
+              <div class="dropzone dash-dropzone" id="dropzone">
+                <input type="file" id="file-input" accept=".pdf,.docx" multiple>
+                <div class="drop-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="17 8 12 3 7 8" />
+                    <line x1="12" y1="3" x2="12" y2="15" />
+                  </svg>
+                </div>
+                <div class="drop-title">Glissez vos CV ici</div>
+                <div class="drop-hint">ou <span>cliquez pour parcourir</span></div>
+                <div class="drop-formats">
+                  <span class="fmt-badge">PDF</span>
+                  <span class="fmt-sep">·</span>
+                  <span class="fmt-badge">DOCX</span>
+                  <span class="fmt-sep">·</span>
+                  <span style="font-size:0.68rem;color:var(--text-3)">plusieurs fichiers possibles · max 10 Mo /
+                    fichier</span>
+                </div>
+                <div class="file-list" id="file-list"></div>
+              </div>
+            </div>
+
+            <div class="dash-section-card">
+              <h3 class="dash-section-title"
+                style="margin-bottom:1.25rem; display:flex; align-items:center; justify-content:space-between; gap:0.75rem;">
+                <span>
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--orange)" stroke-width="2.5"
+                    style="vertical-align:-3px;margin-right:8px">
+                    <rect x="2" y="7" width="20" height="14" rx="2" />
+                    <path d="M16 3H8" />
+                  </svg>
+                  Offre d'emploi
+                </span>
+                <div style="display:flex;gap:8px;align-items:center;">
+                  <button type="button" id="btn-preview-offer"
+                    style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#f97316,#ea580c);color:#fff;border:none;padding:7px 14px;border-radius:8px;font-size:0.78rem;font-weight:700;font-family:'Inter',sans-serif;cursor:pointer;white-space:nowrap;box-shadow:0 2px 8px rgba(249,115,22,0.35);">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                      <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                    Prévisualiser
+                  </button>
+                  <button type="button" id="btn-share-linkedin"
+                    style="display:inline-flex;align-items:center;gap:6px;background:#0A66C2;color:#fff;border:none;padding:7px 14px;border-radius:8px;font-size:0.78rem;font-weight:700;font-family:'Inter',sans-serif;cursor:pointer;white-space:nowrap;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                      <path
+                        d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 1 1 0-4.125 2.062 2.062 0 0 1 0 4.125zM7.114 20.452H3.56V9h3.554v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
+                    </svg>
+                    Publier sur LinkedIn
+                  </button>
+                </div>
+              </h3>
+              <div class="jd-form">
+                <div class="jd-field">
+                  <label for="jd-titre">Intitulé du poste</label>
+                  <input type="text" id="jd-titre" class="jd-input-field"
+                    placeholder="Ex : Développeur Full-Stack, Data Scientist…">
+                </div>
+                <div class="jd-field">
+                  <label for="jd-entreprise">Diplôme</label>
+                  <input type="text" id="jd-entreprise" class="jd-input-field"
+                    placeholder="Ex : Licence Informatique, Master Data Science…">
+                </div>
+                <div class="jd-field">
+                  <label for="jd-competences">Compétences requises</label>
+                  <input type="text" id="jd-competences" class="jd-input-field" placeholder="Ex : Python, React, SQL…">
+                </div>
+                <div class="jd-field">
+                  <label for="jd-reference">Référence</label>
+                  <input type="text" id="jd-reference" class="jd-input-field" placeholder="Ex : DATA03082026">
+                </div>
+              </div>
+            </div>
+          </div>
+          <button type="button" class="btn-analyze dash-btn-analyze" id="btn-analyze">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            Analyser le(s) CV
+          </button>
+
+          <div class="results-area" id="results-area">
+            <div class="section-divider">
+              <div class="section-divider-line"></div>
+              <div class="section-divider-label">Résultats de l'analyse</div>
+              <div class="section-divider-line"></div>
+            </div>
+
+            <div class="export-bar" id="export-bar">
+              <div class="export-bar-left">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--orange)" stroke-width="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                </svg>
+                <span id="export-file-label">Rapport d'analyse</span>
+              </div>
+              <div class="export-bar-actions">
+                <button class="export-btn pdf" id="btn-export-pdf">
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                  Exporter PDF
+                </button>
+                <button class="export-btn json" id="btn-export-json">
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <polyline points="16 18 22 12 16 6" />
+                    <polyline points="8 6 2 12 8 18" />
+                  </svg>
+                  Exporter JSON
+                </button>
+                <button class="export-btn copy" id="btn-copy-summary">
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <rect x="9" y="9" width="13" height="13" rx="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                  </svg>
+                  Copier résumé
+                </button>
+              </div>
+            </div>
+
+            <div class="results-cards" id="results-cards"></div>
+          </div>
+        </div>
+
+        <div class="dash-panel" id="panel-calendar">
+          <div class="dash-panel-header" style="margin-bottom: 2rem;">
+            <div>
+              <p class="dash-panel-eyebrow">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="12" height="12"
+                  style="margin-top:-1px;">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                </svg>
+                INFRASTRUCTURE RECRUTEMENT
+              </p>
+              <div style="display: flex; align-items: center; gap: 14px; margin-top: 2px;">
+                <h2 class="dash-panel-title"
+                  style="margin:0; font-size: 1.8rem; font-weight: 800; letter-spacing: -0.02em;">Calendrier des
+                  Entretiens</h2>
+              </div>
+              <p class="dash-panel-sub" style="margin-top: 0.5rem; font-size: 0.9rem; color: var(--text-2);">Visualisez
+                vos prochaines étapes de recrutement.</p>
+            </div>
+          </div>
+
+          <h3 class="calendar-section-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="16" height="16"
+              style="color:var(--orange);">
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12 6 12 12 16 14"></polyline>
+            </svg>
+            Entretiens planifiés
+          </h3>
+          <div class="calendar-grid" id="calendar-grid">
+            <p style="color:var(--text-3); font-size: 0.9rem;">Chargement des entretiens...</p>
+          </div>
+        </div>
+
+        <div class="dash-panel" id="panel-chat">
+          <div class="dash-panel-header">
+            <div>
+              <h2 class="dash-panel-title">Assistant IA</h2>
+              <p class="dash-panel-sub">Posez vos questions sur le CV analysé.</p>
+            </div>
+          </div>
+          <style>
+            .chat-container {
+              display: flex;
+              flex-direction: column;
+              height: calc(100vh - 220px);
+              max-height: 640px;
+            }
+
+            .chat-msgs {
+              flex: 1;
+              overflow-y: auto;
+              display: flex;
+              flex-direction: column;
+              gap: 0.75rem;
+              padding: 1rem 0.25rem;
+            }
+
+            .chat-bubble {
+              max-width: 72%;
+              padding: 0.65rem 0.9rem;
+              border-radius: 14px;
+              font-size: 0.88rem;
+              line-height: 1.5;
+              white-space: pre-wrap;
+            }
+
+            .chat-bubble.user {
+              align-self: flex-end;
+              background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+              color: #fff;
+              border-bottom-right-radius: 4px;
+            }
+
+            .chat-bubble.ai {
+              align-self: flex-start;
+              background: rgba(249, 115, 22, 0.08);
+              color: #1a1007;
+              border: 1px solid rgba(249, 115, 22, 0.15);
+              border-bottom-left-radius: 4px;
+            }
+
+            .chat-empty-hint {
+              color: var(--text-3, #78614a);
+              font-size: 0.85rem;
+              text-align: center;
+              margin: auto;
+            }
+
+            #chat-form {
+              display: flex;
+              gap: 0.6rem;
+              padding-top: 0.75rem;
+              border-top: 1px solid rgba(249, 115, 22, 0.15);
+            }
+
+            #chat-input {
+              flex: 1;
+              padding: 0.7rem 0.9rem;
+              border: 1.5px solid #e7e0d8;
+              border-radius: 10px;
+              font-size: 0.9rem;
+              font-family: 'Inter', sans-serif;
+              outline: none;
+            }
+
+            #chat-input:focus {
+              border-color: #f97316;
+            }
+
+            #chat-form button {
+              background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+              color: #fff;
+              border: none;
+              padding: 0 1.4rem;
+              border-radius: 10px;
+              font-weight: 700;
+              font-size: 0.85rem;
+              cursor: pointer;
+            }
+
+            #chat-form button:hover {
+              filter: brightness(1.05);
+            }
+
+            /* ── Cadres visibles pour les champs du formulaire "Planifier un Entretien" ── */
+            #interview-date,
+            #interview-time,
+            #interview-format,
+            #interview-link,
+            #interview-location,
+            #interview-notes {
+              border: 1.5px solid #d1c7ba !important;
+              border-radius: 8px !important;
+              padding: 0.6rem 0.75rem !important;
+              background: #ffffff !important;
+              width: 100% !important;
+              box-sizing: border-box !important;
+              font-family: 'Inter', sans-serif !important;
+              font-size: 0.9rem !important;
+              outline: none !important;
+              transition: border-color 0.15s ease !important;
+            }
+
+            #interview-date:focus,
+            #interview-time:focus,
+            #interview-format:focus,
+            #interview-link:focus,
+            #interview-location:focus,
+            #interview-notes:focus {
+              border-color: #f97316 !important;
+              box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.12) !important;
+            }
+
+            /* ── Cadre clair autour de la section "Entretiens planifiés" ── */
+            .calendar-section-title {
+              padding: 1.25rem 1.5rem 1rem 1.5rem !important;
+              margin: 0 !important;
+              border: 1.5px solid #e7e0d8;
+              border-bottom: none;
+              border-radius: 14px 14px 0 0;
+              background: #ffffff;
+            }
+
+            .calendar-grid {
+              border: 1.5px solid #e7e0d8 !important;
+              border-top: none !important;
+              border-radius: 0 0 14px 14px !important;
+              background: #ffffff !important;
+              padding: 1.5rem !important;
+              box-shadow: 0 2px 10px rgba(26, 16, 7, 0.04);
+            }
+
+            /* Chaque carte d'entretien individuelle, mieux délimitée */
+            .calendar-grid>div {
+              border: 1px solid #e7e0d8;
+              border-radius: 12px;
+              background: #fdfbf8;
+            }
+          </style>
+
+          <div class="chat-container">
+            <div class="chat-cv-select-wrap" style="margin-bottom:0.75rem">
+              <label for="chat-cv-select"
+                style="display:block;font-size:0.8rem;font-weight:600;color:var(--text-2,#44372a);margin-bottom:0.35rem">CV
+                concerné par la conversation</label>
+              <select id="chat-cv-select"
+                style="width:100%;padding:0.6rem 0.85rem;border:1.5px solid #e7e0d8;border-radius:10px;font-size:0.85rem;font-family:'Inter',sans-serif;background:#fff;outline:none">
+                <option value="">Sélectionnez un CV analysé…</option>
+              </select>
+            </div>
+            <div class="chat-msgs" id="chat-msgs">
+              <div class="chat-empty-hint" id="chat-empty-hint">
+                Analysez d'abord un CV dans "Nouvelle analyse", puis posez vos questions ici.
+              </div>
+            </div>
+            <form id="chat-form">
+              <input type="text" id="chat-input" placeholder="Posez une question sur ce CV…" autocomplete="off">
+              <button type="submit">Envoyer</button>
+            </form>
+          </div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+
+  <!-- Modale Planifier un Entretien -->
+  <div class="full-modal-overlay" id="interview-modal">
+    <div class="full-modal-box" style="max-width: 500px;">
+      <div class="full-modal-header">
+        <div>
+          <h3 style="margin:0;font-size:1.1rem;font-weight:700;color:var(--text-1)">Planifier un Entretien</h3>
+        </div>
+        <button class="icon-btn" id="btn-close-interview-modal" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </div>
+      <form id="interview-form" style="margin: 0;">
+        <div class="full-modal-body" style="display: flex; flex-direction: column; gap: 15px;">
+          <input type="hidden" id="interview-analysis-id">
+
+
+          <div class="form-group">
+            <label style="display:block; margin-bottom: 5px; font-size: 0.85rem; color: var(--text-2);">Date de
+              l'entretien</label>
+            <input type="date" id="interview-date" required
+              style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-1); color: var(--text-1); font-family: inherit;">
+          </div>
+
+          <div class="form-group">
+            <label style="display:block; margin-bottom: 5px; font-size: 0.85rem; color: var(--text-2);">Heure de
+              l'entretien</label>
+            <input type="time" id="interview-time" required
+              style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-1); color: var(--text-1); font-family: inherit;">
+          </div>
+
+          <div class="form-group">
+            <label style="display:block; margin-bottom: 5px; font-size: 0.85rem; color: var(--text-2);">Format</label>
+            <select id="interview-format" required
+              style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-1); color: var(--text-1); font-family: inherit;">
+              <option value="Visio-conférence">Visio-conférence</option>
+              <option value="Présentiel">Présentiel</option>
+              <option value="Téléphone">Téléphone</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label style="display:block; margin-bottom: 5px; font-size: 0.85rem; color: var(--text-2);">Lieu ou Lien
+              (ex: Teams, Adresse physique)</label>
+            <input type="text" id="interview-link" placeholder="www.teams.com"
+              style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-1); color: var(--text-1); font-family: inherit;">
+          </div>
+
+          <div class="form-group">
+            <label style="display:block; margin-bottom: 5px; font-size: 0.85rem; color: var(--text-2);">Notes internes
+              (optionnel)</label>
+            <textarea id="interview-notes" rows="3" placeholder="Entretien technique"
+              style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-1); color: var(--text-1); resize: vertical; font-family: inherit;"></textarea>
+          </div>
+        </div>
+        <div class="full-modal-footer">
+          <button type="button" class="secondary-btn" id="btn-cancel-interview-modal">Annuler</button>
+          <button type="submit" class="primary-btn">Planifier & Envoyer Convocation</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modale d'Analyse Complète -->
+  <div class="full-modal-overlay" id="full-analysis-modal">
+    <div class="full-modal-box">
+      <div class="full-modal-header">
+        <div>
+          <h3 style="margin:0;font-size:1.3rem;font-weight:700;color:var(--text-1)" id="full-modal-title">Analyse
+            complète du CV</h3>
+          <span style="font-size:0.82rem;color:var(--text-3)" id="full-modal-sub">Rapport d'analyse IA détaillé</span>
+        </div>
+        <button class="icon-btn" id="btn-close-full-modal">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </div>
+      <div class="full-modal-body" id="full-modal-body-content">
+        <!-- Content dynamically populated -->
+      </div>
+      <div class="full-modal-footer">
+        <button class="secondary-btn" id="full-modal-btn-download">Télécharger le rapport PDF</button>
+        <button class="primary-btn" id="full-modal-btn-close">Fermer</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="loader-overlay" id="loader">
+    <div class="loader-box">
+      <div class="spinner-wrap">
+        <div class="spin-ring"></div>
+        <div class="spin-ring"></div>
+        <div class="spin-ring"></div>
+      </div>
+      <div class="loader-title" id="loader-title">Chargement…</div>
+      <div class="loader-sub" id="loader-sub"></div>
+    </div>
+  </div>
+
+  <div id="toasts" class="toasts-wrap"></div>
+
+  <div id="undo-container"
+    style="display:none; position:fixed; bottom:24px; left:50%; transform:translateX(-50%); z-index:2000;">
+    <div
+      style="display:flex; align-items:center; gap:1rem; background:#1a1007; color:#ffffff; padding:0.85rem 1.25rem; border-radius:12px; box-shadow:0 8px 24px rgba(0,0,0,0.25); font-family:'Inter',sans-serif; font-size:0.88rem;">
+      <span id="undo-message">Candidature supprimée.</span>
+      <button type="button" id="undo-btn"
+        style="background:none; border:none; color:#f97316; font-weight:700; cursor:pointer; padding:4px 8px; border-radius:6px; font-size:0.88rem;">
+        Annuler
+      </button>
+    </div>
+  </div>
+
+  <!-- Barre "Annuler la suppression d'entretien", cachée par défaut -->
+  <div id="undo-interview-container"
+    style="display:none; position:fixed; bottom:80px; left:50%; transform:translateX(-50%); z-index:2000;">
+    <div
+      style="display:flex; align-items:center; gap:1rem; background:#1c1a2e; color:#ffffff; padding:0.85rem 1.25rem; border-radius:12px; box-shadow:0 8px 24px rgba(0,0,0,0.25); font-family:'Inter',sans-serif; font-size:0.88rem;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#f97316" stroke-width="2" width="16" height="16">
+        <rect x="3" y="4" width="18" height="18" rx="2" />
+        <line x1="16" y1="2" x2="16" y2="6" />
+        <line x1="8" y1="2" x2="8" y2="6" />
+        <line x1="3" y1="10" x2="21" y2="10" />
+      </svg>
+      <span id="undo-interview-message">Entretien supprimé.</span>
+      <button type="button" id="undo-interview-btn"
+        style="background:none; border:none; color:#f97316; font-weight:700; cursor:pointer; padding:4px 8px; border-radius:6px; font-size:0.88rem;">
+        Annuler
+      </button>
+    </div>
+  </div>
+
+  <!-- ═══ MODAL : Prévisualisation de l'offre ═══ -->
+  <div id="offer-preview-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.72);backdrop-filter:blur(6px);overflow-y:auto;">
+    <div style="min-height:100vh;display:flex;align-items:flex-start;justify-content:center;padding:32px 16px;">
+      <div style="background:#0f172a;border:1px solid rgba(249,115,22,0.25);border-radius:20px;width:100%;max-width:580px;overflow:hidden;box-shadow:0 32px 64px rgba(0,0,0,0.6);animation:slideInUp .3s ease;">
+
+        <!-- Header du modal -->
+        <div style="padding:18px 22px;border-bottom:1px solid rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:space-between;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div style="width:34px;height:34px;background:linear-gradient(135deg,#0A66C2,#0077b5);border-radius:8px;display:flex;align-items:center;justify-content:center;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 1 1 0-4.125 2.062 2.062 0 0 1 0 4.125zM7.114 20.452H3.56V9h3.554v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+            </div>
+            <div>
+              <div style="color:#fff;font-weight:700;font-size:0.9rem;">Aperçu de la publication</div>
+              <div style="color:#64748b;font-size:0.72rem;">Ce à quoi ressemblera votre post LinkedIn</div>
+            </div>
+          </div>
+          <button id="close-offer-preview" style="background:rgba(255,255,255,0.07);border:none;color:#94a3b8;width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:1.1rem;display:flex;align-items:center;justify-content:center;">✕</button>
+        </div>
+
+        <!-- Simulation de la boîte de post LinkedIn -->
+        <div style="padding:20px 22px;border-bottom:1px solid rgba(255,255,255,0.06);">
+          <!-- Profil fictif d'aperçu -->
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+            <div style="width:42px;height:42px;background:linear-gradient(135deg,#f97316,#ea580c);border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:900;color:#fff;font-size:0.95rem;flex-shrink:0;">E</div>
+            <div>
+              <div style="color:#fff;font-weight:700;font-size:0.88rem;">Votre Entreprise</div>
+              <div style="color:#64748b;font-size:0.72rem;">Entreprise · Recrutement</div>
+            </div>
+          </div>
+
+          <!-- Texte du post LinkedIn -->
+          <div id="preview-post-text" style="color:#e2e8f0;font-size:0.87rem;line-height:1.65;white-space:pre-wrap;word-break:break-word;margin-bottom:14px;max-height:260px;overflow-y:auto;"></div>
+
+          <!-- Image de l'affiche -->
+          <div id="preview-poster-image-wrap" style="border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,0.08);">
+            <img id="preview-poster-img" src="" alt="Affiche de l'offre" style="width:100%;display:block;" />
+          </div>
+        </div>
+
+        <!-- Footer avec les boutons -->
+        <div style="padding:16px 22px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
+          <button id="preview-download-btn"
+            style="display:inline-flex;align-items:center;gap:6px;background:rgba(249,115,22,0.12);color:#f97316;border:1px solid rgba(249,115,22,0.3);padding:8px 16px;border-radius:9px;font-size:0.8rem;font-weight:700;cursor:pointer;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Télécharger l'affiche
+          </button>
+          <button id="preview-publish-btn"
+            style="display:inline-flex;align-items:center;gap:6px;background:#0A66C2;color:#fff;border:none;padding:8px 18px;border-radius:9px;font-size:0.8rem;font-weight:700;cursor:pointer;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 1 1 0-4.125 2.062 2.062 0 0 1 0 4.125zM7.114 20.452H3.56V9h3.554v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+            Publier sur LinkedIn
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hidden container used for html2canvas rendering of the job poster -->
+  <div id="poster-render-wrapper" style="position: fixed; left: -9999px; top: -9999px; width: 600px; z-index: -1;">
+    <div id="job-poster-card" style="width: 600px; background: #ffffff; font-family: 'Inter', system-ui, sans-serif; text-align: left;"></div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+  <script src="js/api.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="js/app_v3.js"></script>
+</body>
+
+</html>
